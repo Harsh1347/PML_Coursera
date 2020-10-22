@@ -1,0 +1,207 @@
+---
+title: "Practical Machine Learning Week 4"
+author: "Harsh Gupta"
+date: "10/22/2020"
+output: html_document
+---
+
+## Summary
+
+This report uses machine learning algorithms to predict the manner in which users of exercise devices exercise. 
+
+
+### Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website [here:](http://groupware.les.inf.puc-rio.br/har) (see the section on the Weight Lifting Exercise Dataset). 
+
+### Data 
+
+The training data for this project are available here: 
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here: 
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+
+# Loading the required libraries
+
+```{r}
+library(caret)
+library(dplyr)
+library(knitr)
+library(VIM)
+library(gbm)
+library(ggplot2)
+library(corrplot)
+
+```
+
+
+# Getting the data
+
+```{r}
+data_dir = "./data"
+training_url = "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+test_url = "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+training_file = "pml-training.csv"
+test_file = "pml-test.csv"
+if (!file.exists(data_dir)) {
+  dir.create(data_dir)
+}
+if (!file.exists(file.path(data_dir, training_file))) {
+  download.file(training_url, destfile=file.path(data_dir, training_file))
+}
+if (!file.exists(file.path(data_dir, test_file))) {
+  download.file(test_url, destfile=file.path(data_dir, test_file))
+}
+```
+
+## Reading the Data
+
+Split the data into two dataframes. One for testing and one for training.
+
+```{r}
+train_data <- read.csv(file.path(data_dir, training_file))
+test_data <- read.csv(file.path(data_dir, test_file))
+
+```
+
+## Cleaning and preprocessing the raw data
+
+The dataset should be checked for any anomalies/ missing data so that our ML model is more accurate
+
+```{r}
+sum(complete.cases(train_data))
+```
+
+
+
+### Removing the columns with missing or NA values.
+
+
+```{r}
+colnames(train_data)
+plot(colMeans(is.na(train_data)))
+```
+
+As we can see there are a number of columns with missing values.
+
+Only the columns without any missing value/NA value is kept.
+
+
+```{r}
+trainClasse = train_data$classe
+trainRaw = train_data[, sapply(train_data, is.numeric)]
+testRaw = test_data[, sapply(test_data, is.numeric)]
+```
+
+Removing the columns with NA.
+
+```{r}
+trainFilter <- trainRaw[, colSums(is.na(trainRaw)) == 0]
+# Attach Classe variable
+trainFilter$classe = trainClasse
+testFilter <- testRaw[, colSums(is.na(testRaw)) == 0]
+```
+
+
+
+Removing other useless columns.
+
+```{r}
+unwanted = !grepl("X|timestamp", colnames(trainFilter))
+cols = colnames(trainFilter)[unwanted]
+trainFilter = trainFilter %>%
+  select(cols)
+unwanted = !grepl("X|timestamp", colnames(testFilter))
+cols = colnames(testFilter)[unwanted]
+testFilter = testFilter %>%
+  select(cols)
+
+
+dim(trainFilter)
+dim(testFilter)
+```
+
+## Splitting the training data into training and validation. 
+
+We will split the Training data into Training and Validation set using the 80-20 rule. Validation data will be used to check the performance of model while training. And the final testing will be done on testing data.
+
+```{r}
+inTrain <- createDataPartition(trainFilter$classe, p=0.70, list=F)
+trainData <- trainFilter[inTrain, ]
+validationData <- trainFilter[-inTrain, ]
+dim(trainData)
+```
+
+# Data modeling
+
+We will be using  **Random Forest** and **XGBoost** ,which quite popular for initial training.
+
+## Random forest Model
+
+
+```{r}
+set.seed(10000)
+controlRf <- trainControl(method="cv", 5, allowParallel = TRUE)
+modelRf <- train(classe ~ ., data=trainData, method="rf", ntree=50)
+modelRf
+```
+
+### Testing done on validation set
+
+```{r}
+predict_rf <- predict(modelRf, validationData)
+confusionMatrix(validationData$classe, predict_rf)
+```
+
+As the results show,it classified **classe** feature quite accurately.
+
+## XGBoost
+
+```{r}
+controlXGB <- trainControl(method="cv", 5, allowParallel = TRUE)
+modelXGB <- train(classe ~ ., data=trainData, method="xgbTree", trControl=controlXGB)
+```
+
+```{r}
+modelXGB
+```
+
+### Testing done on validation set
+
+```{r}
+predict_XGB <- predict(modelXGB, validationData)
+confusionMatrix(validationData$classe, predict_XGB)
+```
+
+XGB gave us even better result with only couple of misclassification
+
+# Comparing the two  models
+
+```{r}
+# collect resamples
+model_results <- resamples(list(RF=modelRf, XGB=modelXGB))
+# summarize the distributions
+summary(model_results)
+# boxplots of results
+bwplot(model_results)
+# dot plots of results
+dotplot(model_results)
+```
+
+# Final testing on testing dataset
+
+```{r}
+resultRf <- predict(modelRf, testFilter[, -length(names(testFilter))])
+resultXGB <- predict(modelXGB, testFilter[, -length(names(testFilter))])
+resultRf
+resultXGB
+confusionMatrix(resultRf, resultXGB)
+```
+
+# Conclusion
+
+After testing the models on testing dataset we noticed that XGB works better with the trainig set.
